@@ -44,6 +44,8 @@ class HoltWintersFit:
         trend: Final trend estimate, in units per period.
         season: Final seasonal offsets, one per period of the cycle, in units.
         season_length: Periods in one seasonal cycle.
+        periods_fitted: How many observations the model was fitted on. Needed so the
+            forecast picks up the seasonal cycle at the right phase — see `predict`.
     """
 
     fitted: np.ndarray
@@ -51,9 +53,17 @@ class HoltWintersFit:
     trend: float
     season: np.ndarray
     season_length: int
+    periods_fitted: int
 
     def predict(self, horizon: int) -> np.ndarray:
         """Forecast the next `horizon` periods, in units.
+
+        The seasonal offset has to continue the cycle from where the fit ended, not
+        restart it. If a model fitted on 730 days of weekly data forecast day 731 using
+        Monday's offset, every prediction would carry the wrong day's shape — and with a
+        real weekday pattern that is enough to make the model lose to a flat average.
+        The phase of the next period is `periods_fitted % season_length`, so step `h`
+        lands on `(periods_fitted + h - 1) % season_length`.
 
         Raises:
             ValueError: If `horizon` is below 1.
@@ -61,8 +71,8 @@ class HoltWintersFit:
         if horizon < 1:
             raise ValueError(f"horizon must be at least 1, got {horizon}")
         steps = np.arange(1, horizon + 1)
-        seasonal = self.season[(steps - 1) % self.season_length]
-        return np.asarray(self.level + steps * self.trend + seasonal, dtype=float)
+        phase = (self.periods_fitted + steps - 1) % self.season_length
+        return np.asarray(self.level + steps * self.trend + self.season[phase], dtype=float)
 
 
 def moving_average(series: np.ndarray, window: int = 7) -> float:
@@ -147,7 +157,7 @@ def holt_winters(
         trend = beta * (level - previous_level) + (1 - beta) * trend
         season[t % season_length] = gamma * (observed - level) + (1 - gamma) * seasonal
 
-    return HoltWintersFit(fitted, level, trend, season, season_length)
+    return HoltWintersFit(fitted, level, trend, season, season_length, len(series))
 
 
 def _validate_holt_winters(

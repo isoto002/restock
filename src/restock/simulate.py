@@ -62,7 +62,7 @@ def _shaped_mean(profile: SkuProfile, dates: pd.DatetimeIndex) -> np.ndarray:
     elapsed = np.arange(len(dates), dtype=float)
     level = profile.base_units + profile.trend_per_day * elapsed
 
-    weekday = np.array([WEEKDAY_SHAPE[d] for d in dates.dayofweek], dtype=float)
+    weekday = np.array([WEEKDAY_SHAPE[d] for d in dates.day_of_week], dtype=float)
     peak = np.where(dates.month.isin(PEAK_MONTHS), PEAK_MULTIPLIER, 1.0)
 
     return np.asarray(level * weekday * peak, dtype=float)

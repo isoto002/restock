@@ -137,3 +137,23 @@ class TestHoltWinters:
         fit = holt_winters(np.array([10.0, 20.0, 30.0, 40.0] * 8), season_length=4)
         predicted = fit.predict(8)
         assert predicted[:4] == pytest.approx(predicted[4:], abs=2.0)
+
+    def test_forecast_continues_the_cycle_when_the_series_does_not_end_on_a_boundary(
+        self,
+    ) -> None:
+        """The regression test for a real bug: the forecast restarted the cycle at index 0.
+
+        Every other seasonal test here used a series whose length was an exact multiple of
+        the season, where restarting at index 0 happens to be correct — so they all passed
+        while the model silently applied the wrong day's offset to real data.
+
+        Here the cycle [10, 20, 30, 40] is repeated eight times and then cut one period
+        short, so the series ends mid-cycle on the value 30. The next period must therefore
+        be the 40, not back round to the 10.
+        """
+        series = np.array([10.0, 20.0, 30.0, 40.0] * 8)[:-1]
+        assert len(series) % 4 == 3, "this test is only meaningful off a cycle boundary"
+
+        predicted = holt_winters(series, season_length=4).predict(1)
+
+        assert predicted[0] == pytest.approx(40.0, abs=2.0)
