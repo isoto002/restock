@@ -1,0 +1,10 @@
+# Runtime dependencies for the hosted dashboard.
+#
+# Streamlit Community Cloud builds from this file. For local development install the
+# package itself instead, which pulls these in plus the dev tools:
+#
+#     pip install -e ".[dev,dashboard]"
+
+numpy>=1.26
+pandas>=2.1
+streamlit>=1.31

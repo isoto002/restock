@@ -15,9 +15,7 @@ from restock.cli import main
 
 
 class TestDemo:
-    def test_runs_end_to_end_and_prints_a_table(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_runs_end_to_end_and_prints_a_table(self, capsys: pytest.CaptureFixture[str]) -> None:
         """`restock demo` is the one command in the README quickstart — it must just work."""
         exit_code = main(["demo"])
         out = capsys.readouterr().out

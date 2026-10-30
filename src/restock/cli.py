@@ -14,9 +14,9 @@ from __future__ import annotations
 
 import argparse
 import sys
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Sequence
 
 import numpy as np
 import pandas as pd
@@ -118,7 +118,7 @@ def _plan_for_sku(
 def _build_plans(frame: pd.DataFrame, **kwargs: float) -> list[SkuPlan]:
     """One `SkuPlan` per SKU in the frame, in alphabetical order."""
     return [
-        _plan_for_sku(str(sku), group["units"].to_numpy(dtype=float), **kwargs)  # type: ignore[arg-type]
+        _plan_for_sku(str(sku), group["units"].to_numpy(dtype=float), **kwargs)
         for sku, group in frame.groupby("sku", sort=True)
     ]
 
