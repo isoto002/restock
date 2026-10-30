@@ -143,14 +143,10 @@ def at_risk_table(
     return pd.DataFrame(rows).sort_values("Days of cover").reset_index(drop=True)
 
 
-def main() -> None:
-    """Draw the page."""
-    st.title("📦 restock")
-    st.caption("Demand forecasting and reorder-point planning. Runs on generated sample data.")
-
-    lead_time, lead_time_sd, service_level = sidebar_controls()
-    history = load_history(days=DEMO_DAYS, seed=DEMO_SEED)
-
+def draw_at_risk(
+    history: pd.DataFrame, lead_time: float, lead_time_sd: float, service_level: float
+) -> None:
+    """The headline section: which products need ordering, soonest first."""
     st.subheader("What needs ordering")
     st.dataframe(
         at_risk_table(history, lead_time, lead_time_sd, service_level),
@@ -158,6 +154,21 @@ def main() -> None:
         hide_index=True,
     )
 
+
+def history_and_forecast_chart(group: pd.DataFrame, forecast: list[float]) -> pd.DataFrame:
+    """Recent actuals and the forecast on one date index, ready for `st.line_chart`."""
+    recent = group.tail(CHART_HISTORY_DAYS)
+    future_dates = pd.date_range(recent["date"].iloc[-1], periods=len(forecast) + 1, freq="D")[1:]
+    return pd.concat(
+        [
+            pd.DataFrame({"date": recent["date"], "Actual": recent["units"].to_numpy()}),
+            pd.DataFrame({"date": future_dates, "Forecast": forecast}),
+        ]
+    ).set_index("date")
+
+
+def draw_forecast(history: pd.DataFrame) -> None:
+    """One product's demand history, its forecast, and how accurate the model has been."""
     st.subheader("Forecast")
     sku = st.selectbox(
         "Product",
@@ -181,20 +192,23 @@ def main() -> None:
         help="Positive means the forecast runs high.",
     )
 
-    recent = group.tail(CHART_HISTORY_DAYS)
-    future_dates = pd.date_range(recent["date"].iloc[-1], periods=len(forecast) + 1, freq="D")[1:]
-    chart = pd.concat(
-        [
-            pd.DataFrame({"date": recent["date"], "Actual": recent["units"].to_numpy()}),
-            pd.DataFrame({"date": future_dates, "Forecast": forecast}),
-        ]
-    ).set_index("date")
-    st.line_chart(chart)
-
+    st.line_chart(history_and_forecast_chart(group, forecast))
     st.caption(
         "A daily forecast for noisy retail demand is routinely 20-30% off. That is not a "
         "broken model — it is why safety stock exists."
     )
+
+
+def main() -> None:
+    """Draw the page."""
+    st.title("📦 restock")
+    st.caption("Demand forecasting and reorder-point planning. Runs on generated sample data.")
+
+    lead_time, lead_time_sd, service_level = sidebar_controls()
+    history = load_history(days=DEMO_DAYS, seed=DEMO_SEED)
+
+    draw_at_risk(history, lead_time, lead_time_sd, service_level)
+    draw_forecast(history)
 
 
 if __name__ == "__main__":
