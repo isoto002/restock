@@ -18,8 +18,6 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
-DAYS_IN_WEEK = 7
-
 #: Multiplier applied to each weekday, Monday first. Weekends run hotter.
 WEEKDAY_SHAPE: tuple[float, ...] = (0.85, 0.90, 0.95, 1.00, 1.25, 1.40, 1.15)
 

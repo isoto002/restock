@@ -26,6 +26,19 @@ from restock.simulate import generate_sales
 WEEKLY_CYCLE = 7
 BACKTEST_DAYS = 28
 
+#: Two years of demo history — Holt-Winters needs at least two full seasonal cycles.
+DEMO_DAYS = 730
+DEMO_SEED = 7
+
+#: How much history the chart shows. Long enough to see the weekly shape, short enough
+#: that the forecast is not a sliver at the right-hand edge.
+CHART_HISTORY_DAYS = 90
+FORECAST_HORIZON = 28
+
+#: Stand-in stock levels are spread this far either side of each reorder point, so the
+#: at-risk table shows a mix of "order now" and "fine" rather than one uniform answer.
+STOCK_POSITION_RANGE = (0.6, 1.8)
+
 st.set_page_config(page_title="restock", page_icon="📦", layout="centered")
 
 
@@ -115,7 +128,8 @@ def at_risk_table(
         # crc32, not hash(): Python salts string hashes per process, so hash() would move
         # the whole table every time the server restarted.
         seed = zlib.crc32(str(sku).encode("utf-8"))
-        on_hand = policy.reorder_point * float(np.random.default_rng(seed).uniform(0.6, 1.8))
+        position = np.random.default_rng(seed).uniform(*STOCK_POSITION_RANGE)
+        on_hand = policy.reorder_point * float(position)
         rows.append(
             {
                 "SKU": sku,
@@ -135,7 +149,7 @@ def main() -> None:
     st.caption("Demand forecasting and reorder-point planning. Runs on generated sample data.")
 
     lead_time, lead_time_sd, service_level = sidebar_controls()
-    history = load_history(days=730, seed=7)
+    history = load_history(days=DEMO_DAYS, seed=DEMO_SEED)
 
     st.subheader("What needs ordering")
     st.dataframe(
@@ -153,7 +167,7 @@ def main() -> None:
 
     group = history[history["sku"] == sku]
     units = tuple(group["units"].to_numpy(dtype=float))
-    forecast, mape, bias = forecast_sku(units, horizon=28)
+    forecast, mape, bias = forecast_sku(units, horizon=FORECAST_HORIZON)
 
     left, right = st.columns(2)
     left.metric(
@@ -167,7 +181,7 @@ def main() -> None:
         help="Positive means the forecast runs high.",
     )
 
-    recent = group.tail(90)
+    recent = group.tail(CHART_HISTORY_DAYS)
     future_dates = pd.date_range(recent["date"].iloc[-1], periods=len(forecast) + 1, freq="D")[1:]
     chart = pd.concat(
         [

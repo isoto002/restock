@@ -186,6 +186,7 @@ def _add_shared_arguments(parser: argparse.ArgumentParser) -> None:
 
 
 def _build_parser() -> argparse.ArgumentParser:
+    """Assemble the argument parser: `--version`, plus the `demo` and `plan` subcommands."""
     parser = argparse.ArgumentParser(
         prog="restock", description="Demand forecasting and reorder-point planning."
     )
