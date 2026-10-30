@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "restock"
+version = "0.1.0"
+description = "Demand forecasting and reorder-point planning for inventory teams"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Isaiah Soto", email = "Izzysoto199806@gmail.com" }]
+keywords = ["inventory", "forecasting", "supply-chain", "reorder-point", "holt-winters"]
+dependencies = ["numpy>=1.26", "pandas>=2.1"]
+
+[project.optional-dependencies]
+dashboard = ["streamlit>=1.31"]
+dev = ["pytest>=8.0", "ruff>=0.3", "mypy>=1.8", "pandas-stubs"]
+
+[project.scripts]
+restock = "restock.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/isoto002/restock"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+packages = ["restock"]
+mypy_path = "src"
