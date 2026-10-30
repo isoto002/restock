@@ -130,14 +130,16 @@ def at_risk_table(
         seed = zlib.crc32(str(sku).encode("utf-8"))
         position = np.random.default_rng(seed).uniform(*STOCK_POSITION_RANGE)
         on_hand = policy.reorder_point * float(position)
+        # Decision first. On a narrow screen the table scrolls sideways, so the answer
+        # has to be in the columns you see without scrolling, not the last one.
         rows.append(
             {
                 "SKU": sku,
-                "On hand": round(on_hand),
-                "Avg/day": round(demand_mean, 1),
-                "Days of cover": round(days_of_cover(on_hand, demand_mean), 1),
-                "Reorder point": round(policy.reorder_point),
                 "Order now": "YES" if on_hand <= policy.reorder_point else "no",
+                "Days of cover": round(days_of_cover(on_hand, demand_mean), 1),
+                "On hand": round(on_hand),
+                "Reorder point": round(policy.reorder_point),
+                "Avg/day": round(demand_mean, 1),
             }
         )
     return pd.DataFrame(rows).sort_values("Days of cover").reset_index(drop=True)
