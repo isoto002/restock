@@ -8,3 +8,9 @@
 numpy>=1.26
 pandas>=2.1
 streamlit>=1.31
+
+# The package itself. This line is load-bearing: the forecasting code lives under `src/`,
+# which is NOT on the path when a host runs `streamlit run app.py` from the repository root.
+# Without it the hosted app dies on `from restock.forecast import ...` while working
+# perfectly on a machine that has the editable install.
+.
