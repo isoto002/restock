@@ -49,6 +49,15 @@ The dashboard in the screenshot:
 streamlit run app.py
 ```
 
+It opens on generated sample data so there is something to look at immediately. **Drop your
+own CSV into the sidebar** and it plans against that instead: same three columns, one row per
+product per day. A transaction-level export with several rows per day is fine, those get summed.
+Nothing is stored anywhere; the file is read in memory and discarded.
+
+A product needs at least 42 days of history (two weekly cycles for the model, plus four weeks
+held back to measure the error on). Anything shorter is skipped, and a file that cannot be used
+says why rather than failing silently.
+
 ## How it works
 
 ### Forecasting: Holt-Winters

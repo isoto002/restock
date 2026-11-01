@@ -12,6 +12,7 @@ nothing can test it there.
 
 from __future__ import annotations
 
+import io
 import zlib
 
 import numpy as np
@@ -42,10 +43,66 @@ STOCK_POSITION_RANGE = (0.6, 1.8)
 st.set_page_config(page_title="restock", page_icon="📦", layout="centered")
 
 
+#: What an uploaded CSV must contain. Same three columns the CLI's `plan` command takes.
+REQUIRED_COLUMNS = ("date", "sku", "units")
+
+#: Holt-Winters needs two full seasonal cycles, and the backtest holds out another window.
+MIN_ROWS_PER_SKU = WEEKLY_CYCLE * 2 + BACKTEST_DAYS
+
+
+class UploadError(ValueError):
+    """An uploaded file could not be used, with a reason worth showing a person."""
+
+
 @st.cache_data
 def load_history(days: int, seed: int) -> pd.DataFrame:
     """Sales history, cached so changing an unrelated control does not regenerate it."""
     return generate_sales(days=days, seed=seed)
+
+
+def read_uploaded_history(raw: bytes) -> pd.DataFrame:
+    """Parse an uploaded sales CSV into the frame the rest of the page expects.
+
+    Every failure here raises `UploadError` with a sentence naming what is wrong and what
+    to do about it. Somebody arriving with their own export has no idea what this app
+    wants, so a bare traceback would end the visit.
+    """
+    try:
+        frame = pd.read_csv(io.BytesIO(raw))
+    except Exception as exc:
+        # Deliberately broad: pandas raises a dozen different things for a malformed file,
+        # and every one of them is the same story to the person who uploaded it.
+        raise UploadError(f"That file could not be read as a CSV. {exc}") from exc
+
+    frame.columns = [str(c).strip().lower() for c in frame.columns]
+    missing = [c for c in REQUIRED_COLUMNS if c not in frame.columns]
+    if missing:
+        raise UploadError(
+            f"Missing column(s): {', '.join(missing)}. "
+            f"The file needs {', '.join(REQUIRED_COLUMNS)} — one row per product per day."
+        )
+
+    frame = frame[list(REQUIRED_COLUMNS)].copy()
+    frame["date"] = pd.to_datetime(frame["date"], errors="coerce")
+    frame["units"] = pd.to_numeric(frame["units"], errors="coerce")
+    frame = frame.dropna(subset=["date", "units"])
+    if frame.empty:
+        raise UploadError("No usable rows. Check that `date` holds dates and `units` numbers.")
+
+    frame["sku"] = frame["sku"].astype(str)
+    # One row per SKU per day. A transaction-level export has many rows per day, and the
+    # forecaster expects a daily series, so sum them rather than silently taking the last.
+    frame = frame.groupby(["sku", "date"], as_index=False)["units"].sum()
+    frame = frame.sort_values(["sku", "date"]).reset_index(drop=True)
+
+    long_enough = frame.groupby("sku")["units"].transform("size") >= MIN_ROWS_PER_SKU
+    usable = frame[long_enough]
+    if usable.empty:
+        raise UploadError(
+            f"Every product has fewer than {MIN_ROWS_PER_SKU} days of history. "
+            "Seasonal forecasting needs two full weekly cycles plus a window to test on."
+        )
+    return usable.reset_index(drop=True)
 
 
 @st.cache_data
@@ -201,13 +258,50 @@ def draw_forecast(history: pd.DataFrame) -> None:
     )
 
 
+def pick_history() -> tuple[pd.DataFrame, str]:
+    """The uploaded file when there is one, the generated sample otherwise.
+
+    Returns `(history, caption)`. A failed upload falls back to the sample rather than
+    emptying the page, because a visitor whose CSV was rejected should still see the thing
+    working while they fix their file.
+    """
+    st.sidebar.header("Your data")
+    upload = st.sidebar.file_uploader(
+        "Sales history (CSV)",
+        type="csv",
+        help="Three columns: date, sku, units. One row per product per day.",
+    )
+    st.sidebar.caption("Nothing is stored. The file is read in memory and discarded.")
+
+    if upload is None:
+        return (
+            load_history(days=DEMO_DAYS, seed=DEMO_SEED),
+            "Demand forecasting and reorder-point planning. Showing generated sample data "
+            "— upload your own sales CSV in the sidebar to plan against it.",
+        )
+
+    try:
+        history = read_uploaded_history(upload.getvalue())
+    except UploadError as exc:
+        st.sidebar.error(str(exc))
+        return (
+            load_history(days=DEMO_DAYS, seed=DEMO_SEED),
+            "Showing sample data, because the uploaded file could not be used. "
+            "The reason is in the sidebar.",
+        )
+
+    skus = history["sku"].nunique()
+    days = history["date"].nunique()
+    return history, f"Planning against your upload: {skus} products across {days} days."
+
+
 def main() -> None:
     """Draw the page."""
     st.title("📦 restock")
-    st.caption("Demand forecasting and reorder-point planning. Runs on generated sample data.")
 
     lead_time, lead_time_sd, service_level = sidebar_controls()
-    history = load_history(days=DEMO_DAYS, seed=DEMO_SEED)
+    history, caption = pick_history()
+    st.caption(caption)
 
     draw_at_risk(history, lead_time, lead_time_sd, service_level)
     draw_forecast(history)
