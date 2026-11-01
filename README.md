@@ -5,6 +5,16 @@ Demand forecasting and reorder-point planning for inventory teams.
 Tells you which products are about to stock out, how much buffer to hold against a supplier
 who runs late, and when to place the order.
 
+### [▶ Try it live](https://isaiah-restock.streamlit.app/)
+
+No install, no account. It opens on sample data, and you can drop your own sales CSV into the
+sidebar to plan against that instead — it works out which of your columns is which, so a
+Shopify or Amazon export goes straight in.
+
+[![Live demo](https://img.shields.io/badge/demo-live-FF4B4B?logo=streamlit&logoColor=white)](https://isaiah-restock.streamlit.app/)
+[![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![Tests](https://img.shields.io/badge/tests-90-0A9EDC?logo=pytest&logoColor=white)](tests/)
+
 ![The restock dashboard](docs/dashboard.png)
 
 ## Why I built it
