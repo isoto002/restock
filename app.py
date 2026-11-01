@@ -21,6 +21,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
+from restock.diagnose import diagnose
 from restock.forecast import holt_winters
 from restock.metrics import accuracy
 from restock.policy import days_of_cover, reorder_policy
@@ -304,6 +305,43 @@ def at_risk_table(
     return pd.DataFrame(rows).sort_values("Days of cover").reset_index(drop=True)
 
 
+def draw_data_check(history: pd.DataFrame) -> pd.DataFrame:
+    """Say what the data is before showing a single number derived from it.
+
+    This runs first, and it is the most important thing on the page. A real inventory sheet
+    was once loaded here as demand and planned against, and the output looked exactly as
+    confident as a correct one. Products that cannot be forecast are dropped and named.
+
+    Returns the history with unusable products removed.
+    """
+    verdicts = {
+        sku: diagnose(group["units"].to_numpy(dtype=float))
+        for sku, group in history.groupby("sku", sort=True)
+    }
+    unusable = {s: v for s, v in verdicts.items() if not v.usable}
+    lumpy = [s for s, v in verdicts.items() if v.usable and v.needs_a_different_model]
+
+    if unusable:
+        st.error(
+            f"**{len(unusable)} of {len(verdicts)} products cannot be forecast** and are "
+            "left out below, rather than given a confident answer built on nothing.",
+            icon="🚫",
+        )
+        with st.expander(f"Why — {len(unusable)} product(s)"):
+            for sku, verdict in unusable.items():
+                st.markdown(f"**{sku}** — {verdict.message}")
+
+    if lumpy:
+        st.warning(
+            f"{len(lumpy)} product(s) have intermittent demand, where a seasonal model is a "
+            f"poor fit: {', '.join(lumpy[:6])}{' and others' if len(lumpy) > 6 else ''}. "
+            "They are included, but trust their error figures over their forecasts.",
+            icon="⚠️",
+        )
+
+    return history[~history["sku"].isin(unusable)]
+
+
 def draw_at_risk(
     history: pd.DataFrame, lead_time: float, lead_time_sd: float, service_level: float
 ) -> None:
@@ -439,6 +477,11 @@ def main() -> None:
     lead_time, lead_time_sd, service_level = sidebar_controls()
     history, caption = pick_history()
     st.caption(caption)
+
+    history = draw_data_check(history)
+    if history.empty:
+        st.info("Nothing left to plan with. Upload a file of daily units sold per product.")
+        return
 
     draw_at_risk(history, lead_time, lead_time_sd, service_level)
     draw_forecast(history)

@@ -80,6 +80,26 @@ cannot fix is worse than no guess.
 A transaction-level export with several rows per day is fine, those get summed. Nothing is
 stored anywhere; the file is read in memory and discarded.
 
+### It checks your data before it forecasts it
+
+This exists because of a mistake I made with it. I loaded a real inventory sheet as demand
+history and planned against it, and got back a confident reorder table to the unit. The sheet
+recorded stock *levels*, not consumption: the median product's number changed on 1 day out of
+227. There was nothing in there to forecast, and nothing said so.
+
+A forecaster that fits whatever it is handed is worse than no forecaster, because the output
+looks identical either way. So every product is characterised first:
+
+| Verdict | What it means | What happens |
+|---|---|---|
+| **Steady** | Sells most days, with a weekly shape | Forecast normally |
+| **Intermittent** | Real demand, but lumpy | Forecast, and warn that a seasonal model fits it poorly |
+| **Not demand** | Unchanged on 95%+ of days | **Refused.** A stock level or a stale export, not daily sales |
+| **Too short** | Under 42 days | **Refused**, with the number it needs |
+
+Run against that same inventory sheet now, it refuses 55 of 86 products by name and flags the
+other 31 as lumpy. Nothing gets a confident answer built on nothing.
+
 A product needs at least 42 days of history (two weekly cycles for the model, plus four weeks
 held back to measure the error on). Anything shorter is skipped, and a file that cannot be used
 says why rather than failing silently.
