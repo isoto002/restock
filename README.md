@@ -50,9 +50,25 @@ streamlit run app.py
 ```
 
 It opens on generated sample data so there is something to look at immediately. **Drop your
-own CSV into the sidebar** and it plans against that instead: same three columns, one row per
-product per day. A transaction-level export with several rows per day is fine, those get summed.
-Nothing is stored anywhere; the file is read in memory and discarded.
+own CSV into the sidebar** and it plans against that instead.
+
+**It works out your columns rather than demanding specific names**, because nobody's export is
+called `date,sku,units`:
+
+| Export | Columns | Found |
+|---|---|---|
+| Shopify | `Day`, `Product variant SKU`, `Net items sold` | ✅ |
+| Amazon Seller Central | `Date`, `ASIN`, `Units Ordered` | ✅ |
+| SAP-flavoured | `Invoice Date`, `Material`, `Volume` | ✅ |
+| Headers that say nothing | `col_a`, `col_b`, `col_c` | ✅ by content |
+
+Names are matched first, then falls back to reading the data itself: whichever column parses as
+dates is the date, whichever parses as numbers is the quantity, and the repeating text column is
+the product. The match is shown in the sidebar and can be corrected, because a wrong guess you
+cannot fix is worse than no guess.
+
+A transaction-level export with several rows per day is fine, those get summed. Nothing is
+stored anywhere; the file is read in memory and discarded.
 
 A product needs at least 42 days of history (two weekly cycles for the model, plus four weeks
 held back to measure the error on). Anything shorter is skipped, and a file that cannot be used

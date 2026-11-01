@@ -13,6 +13,8 @@ nothing can test it there.
 from __future__ import annotations
 
 import io
+import re
+import warnings
 import zlib
 
 import numpy as np
@@ -43,8 +45,41 @@ STOCK_POSITION_RANGE = (0.6, 1.8)
 st.set_page_config(page_title="restock", page_icon="📦", layout="centered")
 
 
-#: What an uploaded CSV must contain. Same three columns the CLI's `plan` command takes.
-REQUIRED_COLUMNS = ("date", "sku", "units")
+#: The three roles a sales file has to fill, whatever its own columns are called.
+ROLES = ("date", "sku", "units")
+
+#: Header names that mean each role, in the exports people actually arrive with: Shopify,
+#: Amazon Seller Central, Square, QuickBooks, and whatever a BI tool exported last. Matched
+#: on a header stripped of punctuation, so "Product variant SKU" tries "product variant sku".
+COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
+    "date": ("date", "day", "order date", "purchase date", "invoice date", "period", "week"),
+    "sku": (
+        "sku",
+        "item",
+        "product",
+        "asin",
+        "variant",
+        "product variant sku",
+        "item id",
+        "product id",
+        "style",
+        "part number",
+        "material",
+    ),
+    "units": (
+        "units",
+        "qty",
+        "quantity",
+        "sales",
+        "units ordered",
+        "net items sold",
+        "units sold",
+        "quantity sold",
+        "volume",
+        "count",
+        "demand",
+    ),
+}
 
 #: Holt-Winters needs two full seasonal cycles, and the backtest holds out another window.
 MIN_ROWS_PER_SKU = WEEKLY_CYCLE * 2 + BACKTEST_DAYS
@@ -60,29 +95,96 @@ def load_history(days: int, seed: int) -> pd.DataFrame:
     return generate_sales(days=days, seed=seed)
 
 
-def read_uploaded_history(raw: bytes) -> pd.DataFrame:
-    """Parse an uploaded sales CSV into the frame the rest of the page expects.
+def tidy(header: object) -> str:
+    """A header reduced to lowercase words, so punctuation and spacing stop mattering."""
+    return re.sub(r"[^a-z0-9]+", " ", str(header).strip().lower()).strip()
 
-    Every failure here raises `UploadError` with a sentence naming what is wrong and what
-    to do about it. Somebody arriving with their own export has no idea what this app
-    wants, so a bare traceback would end the visit.
-    """
+
+def read_csv(raw: bytes) -> pd.DataFrame:
+    """The uploaded bytes as a frame, with nothing assumed about its columns yet."""
     try:
         frame = pd.read_csv(io.BytesIO(raw))
     except Exception as exc:
         # Deliberately broad: pandas raises a dozen different things for a malformed file,
         # and every one of them is the same story to the person who uploaded it.
         raise UploadError(f"That file could not be read as a CSV. {exc}") from exc
+    if frame.empty or not len(frame.columns):
+        raise UploadError("That file has no rows in it.")
+    return frame
 
-    frame.columns = [str(c).strip().lower() for c in frame.columns]
-    missing = [c for c in REQUIRED_COLUMNS if c not in frame.columns]
-    if missing:
+
+def _score(column: str, values: pd.Series, role: str) -> int:
+    """How well one column fits one role. Higher wins; 0 means it does not fit at all.
+
+    Name first, because a header that says `units` is better evidence than any amount of
+    type sniffing. Content second, so a file with headers nobody has seen before still
+    works: dates parse as dates, quantities parse as numbers, and the product code is
+    whatever is left that repeats.
+    """
+    name = tidy(column)
+    if name in COLUMN_ALIASES[role]:
+        return 100
+    if any(alias in name for alias in COLUMN_ALIASES[role]):
+        return 80
+
+    sample = values.dropna().head(200)
+    if sample.empty:
+        return 0
+    if role == "date":
+        with warnings.catch_warnings():
+            # This is a probe, not a parse. Pandas warning that it had to guess the format
+            # is exactly the answer being asked for, and is noise in anyone's test output.
+            warnings.simplefilter("ignore", UserWarning)
+            parsed = pd.to_datetime(sample, errors="coerce")
+        return 60 if parsed.notna().mean() > 0.9 else 0
+    if role == "units":
+        numeric = pd.to_numeric(sample, errors="coerce")
+        return 50 if numeric.notna().mean() > 0.9 else 0
+    # A product code repeats and is not a number. Fewer distinct values scores higher.
+    if pd.to_numeric(sample, errors="coerce").notna().mean() > 0.9:
+        return 0
+    return 40 if sample.nunique() < len(sample) else 20
+
+
+def guess_columns(frame: pd.DataFrame) -> dict[str, str | None]:
+    """Best guess at which column fills each role. None when nothing plausibly fits.
+
+    Assigned highest-confidence first and each column used once, so a single column cannot
+    be claimed by two roles.
+    """
+    scores = [(_score(c, frame[c], role), role, c) for role in ROLES for c in frame.columns]
+    chosen: dict[str, str | None] = dict.fromkeys(ROLES)
+    taken: set[str] = set()
+    for score, role, column in sorted(scores, key=lambda s: -s[0]):
+        if score > 0 and chosen[role] is None and column not in taken:
+            chosen[role], _ = column, taken.add(column)
+    return chosen
+
+
+def read_uploaded_history(raw: bytes, mapping: dict[str, str] | None = None) -> pd.DataFrame:
+    """Parse an uploaded sales CSV into the frame the rest of the page expects.
+
+    Args:
+        raw: The uploaded file's bytes.
+        mapping: Which column fills each role. Guessed from the file when not given.
+
+    Every failure raises `UploadError` with a sentence naming what is wrong and what to do.
+    Somebody arriving with their own export has no idea what this app wants, so a bare
+    traceback would end the visit.
+    """
+    source = read_csv(raw)
+    chosen = mapping or guess_columns(source)
+
+    unfilled = [role for role in ROLES if not chosen.get(role)]
+    if unfilled:
         raise UploadError(
-            f"Missing column(s): {', '.join(missing)}. "
-            f"The file needs {', '.join(REQUIRED_COLUMNS)} — one row per product per day."
+            f"Could not work out which column holds the {', '.join(unfilled)}. "
+            f"Found: {', '.join(str(c) for c in source.columns)}. "
+            "Pick the right ones in the sidebar."
         )
 
-    frame = frame[list(REQUIRED_COLUMNS)].copy()
+    frame = source[[chosen["date"], chosen["sku"], chosen["units"]]].copy()
+    frame.columns = list(ROLES)
     frame["date"] = pd.to_datetime(frame["date"], errors="coerce")
     frame["units"] = pd.to_numeric(frame["units"], errors="coerce")
     frame = frame.dropna(subset=["date", "units"])
@@ -258,6 +360,39 @@ def draw_forecast(history: pd.DataFrame) -> None:
     )
 
 
+#: What each role means, in the words of someone who has never read this code.
+ROLE_HELP = {
+    "date": "The day the sale happened.",
+    "sku": "The product code or name.",
+    "units": "How many were sold.",
+}
+
+
+def column_mapping_controls(source: pd.DataFrame) -> dict[str, str]:
+    """Show which column was matched to each role, and let it be corrected.
+
+    The guess is usually right, so this stays collapsed. It exists because a wrong guess
+    that cannot be fixed is worse than no guess at all, and because seeing the match is
+    what makes somebody trust the numbers underneath.
+    """
+    guess = guess_columns(source)
+    options = [str(c) for c in source.columns]
+    mapping: dict[str, str] = {}
+
+    with st.sidebar.expander("Columns", expanded=any(v is None for v in guess.values())):
+        st.caption("Matched from your file. Change any that are wrong.")
+        for role in ROLES:
+            current = guess.get(role)
+            mapping[role] = st.selectbox(
+                role,
+                options,
+                index=options.index(str(current)) if current in options else 0,
+                help=ROLE_HELP[role],
+                key=f"column-{role}",
+            )
+    return mapping
+
+
 def pick_history() -> tuple[pd.DataFrame, str]:
     """The uploaded file when there is one, the generated sample otherwise.
 
@@ -281,7 +416,9 @@ def pick_history() -> tuple[pd.DataFrame, str]:
         )
 
     try:
-        history = read_uploaded_history(upload.getvalue())
+        source = read_csv(upload.getvalue())
+        mapping = column_mapping_controls(source)
+        history = read_uploaded_history(upload.getvalue(), mapping)
     except UploadError as exc:
         st.sidebar.error(str(exc))
         return (

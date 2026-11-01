@@ -73,6 +73,50 @@ class TestItAccepts:
         assert set(frame["sku"]) == {"GOOD"}
 
 
+class TestItMatchesRealExportHeaders:
+    """Nobody's export is called date,sku,units. These are the ones people actually arrive with."""
+
+    @pytest.mark.parametrize(
+        ("header", "label"),
+        [
+            ("Day,Product variant SKU,Net items sold", "Shopify"),
+            ("Date,ASIN,Units Ordered", "Amazon Seller Central"),
+            ("Order Date,Item,Quantity", "generic order export"),
+            ("purchase_date,product_id,quantity_sold", "snake_case database dump"),
+            ("DATE , SKU , QTY ", "shouty with padding"),
+            ("Invoice Date,Material,Volume", "SAP-flavoured"),
+        ],
+    )
+    def test_it_finds_the_columns(self, header: str, label: str) -> None:
+        frame = app.read_uploaded_history(csv_bytes(header + "\n" + daily_rows("WIDGET", 60)))
+        assert len(frame) == 60, f"failed on a {label} export"
+        assert list(frame.columns) == ["sku", "date", "units"]
+
+    def test_it_falls_back_to_content_when_the_names_are_meaningless(self) -> None:
+        """A file whose headers say nothing. Dates still parse as dates, numbers as numbers."""
+        frame = app.read_uploaded_history(
+            csv_bytes("col_a,col_b,col_c\n" + daily_rows("WIDGET", 60))
+        )
+        assert len(frame) == 60
+        assert frame["units"].sum() > 0
+
+    def test_one_column_cannot_fill_two_roles(self) -> None:
+        guess = app.guess_columns(
+            pd.DataFrame({"date": ["2025-01-01"], "units": [5], "sku": ["A"]})
+        )
+        assert len({v for v in guess.values() if v}) == 3
+
+    def test_an_explicit_mapping_overrides_the_guess(self) -> None:
+        """What the sidebar dropdowns do when the guess was wrong."""
+        body = "".join(
+            f"{d.date()},RIGHT,7,WRONG\n" for d in pd.date_range("2025-01-01", periods=60)
+        )
+        raw = csv_bytes("date,code_a,units,code_b\n" + body)
+
+        frame = app.read_uploaded_history(raw, {"date": "date", "sku": "code_b", "units": "units"})
+        assert set(frame["sku"]) == {"WRONG"}, "the explicit mapping must win"
+
+
 class TestItRefusesWithAReason:
     def test_a_missing_column_names_it(self) -> None:
         with pytest.raises(app.UploadError, match="units"):
@@ -92,11 +136,19 @@ class TestItRefusesWithAReason:
             app.read_uploaded_history(csv_bytes(HEADER + daily_rows("WIDGET", 5)))
 
     def test_the_error_is_a_sentence_not_a_traceback(self) -> None:
-        """What a person sees matters as much as that it failed."""
+        """What a person sees matters as much as that it failed.
+
+        It has to name the role it could not fill AND list the columns it did find, because
+        the reader is looking at their own file and needs to map one to the other.
+        """
         with pytest.raises(app.UploadError) as caught:
             app.read_uploaded_history(csv_bytes("wrong,headers\n1,2\n"))
         message = str(caught.value)
-        assert message.endswith(".") and "date, sku, units" in message
+
+        assert message.endswith(".")
+        assert "sku" in message, "say which role is unfilled"
+        assert "wrong, headers" in message, "list the columns the file actually has"
+        assert "Traceback" not in message
 
 
 class TestTheCommittedSampleStillWorks:
