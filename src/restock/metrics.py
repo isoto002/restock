@@ -28,12 +28,19 @@ class Accuracy:
     Attributes:
         mape: Mean absolute percentage error, as a percentage. `nan` when every period
             had zero demand and nothing could be measured.
+        mae: Mean absolute error in units, over EVERY period including the zero ones.
         bias: Mean signed error in units. Positive means the forecast ran high.
         periods_scored: Periods that contributed to `mape`.
         periods_skipped: Periods excluded from `mape` because actual demand was zero.
+
+    `mape` is the figure to show a person, because a percentage travels between products of
+    different sizes. `mae` is the figure to COMPARE MODELS on, because it is the only one of
+    the two defined when demand is zero — and on an intermittent product most periods are.
+    Ranking two models by `mape` there would judge them on a handful of days.
     """
 
     mape: float
+    mae: float
     bias: float
     periods_scored: int
     periods_skipped: int
@@ -63,15 +70,19 @@ def accuracy(actual: np.ndarray, forecast: np.ndarray) -> Accuracy:
     forecast = np.asarray(forecast, dtype=float)
 
     bias = float(np.mean(forecast - actual))
+    mae = float(np.mean(np.abs(forecast - actual)))
 
     scorable = actual != 0
     skipped = int(np.sum(~scorable))
     if not scorable.any():
-        return Accuracy(mape=float("nan"), bias=bias, periods_scored=0, periods_skipped=skipped)
+        return Accuracy(
+            mape=float("nan"), mae=mae, bias=bias, periods_scored=0, periods_skipped=skipped
+        )
 
     errors = np.abs((actual[scorable] - forecast[scorable]) / actual[scorable])
     return Accuracy(
         mape=float(np.mean(errors) * 100.0),
+        mae=mae,
         bias=bias,
         periods_scored=int(np.sum(scorable)),
         periods_skipped=skipped,

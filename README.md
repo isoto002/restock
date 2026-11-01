@@ -100,6 +100,36 @@ looks identical either way. So every product is characterised first:
 Run against that same inventory sheet now, it refuses 55 of 86 products by name and flags the
 other 31 as lumpy. Nothing gets a confident answer built on nothing.
 
+### It picks the model by testing, not by assuming
+
+Three models compete for every product. Each is fitted on the earlier history and scored on
+four weeks it never saw; lowest error wins and is then refitted on everything.
+
+- **Flat average** — the baseline. A model that cannot beat the mean has not earned its complexity.
+- **Holt-Winters** — for demand with a weekly or seasonal shape.
+- **Croston's method** — for demand that arrives in lumps, where Holt-Winters fits the gaps
+  between orders instead of the orders. Smooths order size and the interval between orders
+  separately, with the Syntetos-Boylan correction for Croston's known upward bias.
+
+Ranked on mean absolute error, not MAPE. MAPE is undefined when demand is zero, and on an
+intermittent product most days are zero — ranking by it would judge models on a handful of days.
+
+On the 31 forecastable products from that real sheet:
+
+| | |
+|---|---|
+| Flat average won | **15** |
+| Holt-Winters won | 8 |
+| Croston won | 8 |
+| **Better than always using Holt-Winters** | **23 products** |
+| Same | 8 |
+| **Worse** | **0** |
+
+Median error reduction where it helped: **38%**. Best single product: **95%**.
+
+The flat average winning nearly half the time is the honest and slightly humbling result, and
+it is exactly why the baseline stays in the competition. The page tells you when it wins.
+
 A product needs at least 42 days of history (two weekly cycles for the model, plus four weeks
 held back to measure the error on). Anything shorter is skipped, and a file that cannot be used
 says why rather than failing silently.

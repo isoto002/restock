@@ -18,6 +18,7 @@ form instead; that is a deliberate omission, noted in the README.
 
 from __future__ import annotations
 
+import itertools
 from dataclasses import dataclass
 
 import numpy as np
@@ -73,6 +74,83 @@ class HoltWintersFit:
         steps = np.arange(1, horizon + 1)
         phase = (self.periods_fitted + steps - 1) % self.season_length
         return np.asarray(self.level + steps * self.trend + self.season[phase], dtype=float)
+
+
+@dataclass(frozen=True)
+class CrostonFit:
+    """A fitted Croston model for demand that arrives in lumps.
+
+    Holt-Winters assumes something happens every period. On a product that sells on one day
+    in twenty, the zeros dominate and it fits the gaps rather than the demand. Croston's
+    method splits the problem in two and smooths each separately: how BIG an order is when
+    one arrives, and how LONG the wait between orders. The forecast is size divided by
+    interval, which is a rate per period rather than a prediction of any single day.
+
+    Attributes:
+        size: Smoothed demand size when demand occurs, in units.
+        interval: Smoothed number of periods between demands.
+        rate: `size / interval`, the flat per-period forecast, in units.
+        debiased: True when the Syntetos-Boylan correction was applied.
+    """
+
+    size: float
+    interval: float
+    rate: float
+    debiased: bool
+
+    def predict(self, horizon: int) -> np.ndarray:
+        """Forecast the next `horizon` periods, in units.
+
+        Croston produces one rate, not a shape, so every period gets the same number. That
+        is honest: on intermittent demand nothing can say WHICH day the order lands, only
+        how much to expect per day on average.
+
+        Raises:
+            ValueError: If `horizon` is below 1.
+        """
+        if horizon < 1:
+            raise ValueError(f"horizon must be at least 1, got {horizon}")
+        return np.full(horizon, self.rate, dtype=float)
+
+
+def croston(series: np.ndarray, alpha: float = 0.1, debias: bool = True) -> CrostonFit:
+    """Fit Croston's method to intermittent demand.
+
+    Args:
+        series: Demand per period, zeros included. The zeros carry the information here.
+        alpha: Smoothing factor for both size and interval, between 0 and 1. Low values
+            suit intermittent demand, where any one order says little about the next.
+        debias: Apply the Syntetos-Boylan correction, `rate * (1 - alpha / 2)`. Classic
+            Croston is known to run high, because it updates only when demand occurs and
+            so over-weights the periods that had some. On by default.
+
+    Returns:
+        A `CrostonFit`. A series with no demand at all returns a rate of zero rather than
+        dividing by nothing.
+
+    Raises:
+        ValueError: If `alpha` is outside (0, 1], or the series is empty.
+    """
+    if not 0 < alpha <= 1:
+        raise ValueError(f"alpha must be in (0, 1], got {alpha}")
+    series = np.asarray(series, dtype=float)
+    if len(series) == 0:
+        raise ValueError("cannot fit an empty series")
+
+    nonzero = np.flatnonzero(series > 0)
+    if len(nonzero) == 0:
+        return CrostonFit(size=0.0, interval=float(len(series)), rate=0.0, debiased=debias)
+
+    size = float(series[nonzero[0]])
+    interval = float(nonzero[0] + 1)
+    for previous, index in itertools.pairwise(nonzero):
+        size += alpha * (float(series[index]) - size)
+        interval += alpha * (float(index - previous) - interval)
+
+    rate = size / interval if interval > 0 else 0.0
+    if debias:
+        rate *= 1 - alpha / 2
+    return CrostonFit(size=size, interval=interval, rate=rate, debiased=debias)
 
 
 def moving_average(series: np.ndarray, window: int = 7) -> float:

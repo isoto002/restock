@@ -22,9 +22,8 @@ import pandas as pd
 import streamlit as st
 
 from restock.diagnose import diagnose
-from restock.forecast import holt_winters
-from restock.metrics import accuracy
 from restock.policy import days_of_cover, reorder_policy
+from restock.select import Selection, select_model
 from restock.simulate import generate_sales
 
 WEEKLY_CYCLE = 7
@@ -209,24 +208,21 @@ def read_uploaded_history(raw: bytes, mapping: dict[str, str] | None = None) -> 
 
 
 @st.cache_data
-def forecast_sku(units: tuple[float, ...], horizon: int) -> tuple[list[float], float, float]:
-    """Forecast one SKU, cached on the series itself.
+def forecast_sku(units: tuple[float, ...], horizon: int) -> tuple[list[float], Selection]:
+    """Forecast one SKU with whichever model wins a backtest, cached on the series itself.
 
     Streamlit re-runs this whole script on every interaction, so without caching, moving
     any control would refit every model from scratch. The input is a tuple because the
     cache key has to be hashable.
 
-    Returns `(forecast, backtest_mape, bias)`.
+    Returns `(forecast, selection)`. The selection carries every model that was tried and
+    how it scored, so the page can show what the winner beat.
     """
-    series = np.asarray(units, dtype=float)
-    train, test = series[:-BACKTEST_DAYS], series[-BACKTEST_DAYS:]
-
-    scored = accuracy(
-        actual=test,
-        forecast=holt_winters(train, season_length=WEEKLY_CYCLE).predict(BACKTEST_DAYS),
+    choice = select_model(
+        np.asarray(units, dtype=float), season_length=WEEKLY_CYCLE, holdout=BACKTEST_DAYS
     )
-    forecast = holt_winters(series, season_length=WEEKLY_CYCLE).predict(horizon)
-    return list(forecast), scored.mape, scored.bias
+    assert choice.best.predict is not None  # the flat average always fits
+    return list(choice.best.predict(horizon)), choice
 
 
 def sidebar_controls() -> tuple[float, float, float]:
@@ -377,19 +373,50 @@ def draw_forecast(history: pd.DataFrame) -> None:
 
     group = history[history["sku"] == sku]
     units = tuple(group["units"].to_numpy(dtype=float))
-    forecast, mape, bias = forecast_sku(units, horizon=FORECAST_HORIZON)
+    forecast, choice = forecast_sku(units, horizon=FORECAST_HORIZON)
+    best = choice.best
 
-    left, right = st.columns(2)
+    left, middle, right = st.columns(3)
     left.metric(
+        "Model chosen",
+        best.name.split(" (")[0],
+        help="Three models compete on weeks none of them saw. Lowest error wins.",
+    )
+    middle.metric(
         "Backtest error (MAPE)",
-        f"{mape:.1f}%",
-        help="Measured on weeks the model never saw.",
+        "n/a" if np.isnan(best.mape) else f"{best.mape:.1f}%",
+        help="Measured on weeks the model never saw. Undefined when demand was zero throughout.",
     )
     right.metric(
-        "Bias (units/day)",
-        f"{bias:+.1f}",
-        help="Positive means the forecast runs high.",
+        "Average miss (units/day)",
+        f"{best.mae:.1f}",
+        help="Mean absolute error. This is what the models are ranked on, because it is "
+        "defined even on days when nothing sold.",
     )
+
+    if not choice.beat_the_baseline:
+        st.info(
+            "No model beat a flat average here, so that is what is being shown. Worth "
+            "knowing: for this product, sophistication adds nothing.",
+            icon="📏",
+        )
+
+    with st.expander("How the models scored"):
+        st.dataframe(
+            pd.DataFrame(
+                [
+                    {
+                        "Model": c.name,
+                        "Avg miss (units/day)": "—" if c.failed else round(c.mae, 2),
+                        "MAPE": "—" if c.failed or np.isnan(c.mape) else f"{c.mape:.1f}%",
+                        "Note": c.failed or ("chosen" if c is best else ""),
+                    }
+                    for c in choice.candidates
+                ]
+            ),
+            width="stretch",
+            hide_index=True,
+        )
 
     st.line_chart(history_and_forecast_chart(group, forecast))
     st.caption(
